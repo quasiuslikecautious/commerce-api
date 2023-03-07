@@ -20,18 +20,22 @@ impl UserSession {
     pub fn new(
         id: String, 
         session_data: Option<String>,
-        expires_at: chrono::NaiveDateTime,
+        expires_at: Option<chrono::NaiveDateTime>,
         user_agent: Option<String>,
-        last_activity: chrono::NaiveDateTime,
         ip: Option<String>,
         user_id: Option<Uuid>,
     ) -> Self {
+        let now = chrono::Utc::now().naive_utc();
+        let expires = expires_at.unwrap_or(
+            now + chrono::Duration::hours(8)
+        );
+
         Self {
             id,
             session_data,
-            expires_at,
+            expires_at: expires,
             user_agent,
-            last_activity,
+            last_activity: now,
             ip,
             user_id,
         }

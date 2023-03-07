@@ -1,6 +1,6 @@
 // TODO:
 // [ ] nonce for auth (?)
-//     [ ] fix custom session store to save session if new
+//     [x] fix custom session store to save session if new
 // [ ] connect JWT and cooke session
 // [x] pagination
 //      [x] add to /item/all route
@@ -234,45 +234,70 @@ async fn admin(
     return Err(AppError::as_response(StatusCode::UNAUTHORIZED, "Unauthorized"));
 }
 
+/// Due to the way axum session layer currently works, on session load the layer is given a sort of
+/// initial session id, and then on session store a new session id is generated and used for the
+/// rest of the session. As such, when we receive a request on a route that requires a valid
+/// session id to already exist in the database (i.e. the fk requirement of nonces on the sessions
+/// table), we must insert the new session id if it does not already exist. Hopefully this is a
+/// temporary fix.
+async fn redundant_session_guarantee(sid: &str) {
+    use crate::schema::sessions::dsl::*;
+
+    let connection = &mut establish_connection();
+    connection.build_transaction()
+        .read_write()
+        .run(|conn| {
+              diesel::insert_into(sessions)
+                    .values(
+                        UserSession::new(
+                            sid.to_string(),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None
+                        )
+                    )
+                    .on_conflict_do_nothing()
+                    .execute(conn)
+        }).unwrap();
+}
+
 ///
 async fn nonce(session: ReadableSession) -> Result<NonceResponse, ErrorResponse> {
     debug!("GET request received on /nonce route");
     use crate::schema::nonces::dsl::*;
 
     let sid = session.id();
-    let nonce_value = Nonce::generate(32);
+    let session_nonce = Nonce::new(&sid);
 
-    println!("(sid -> nonce): {} -> {}", &sid, &nonce_value);
-
-    let now = chrono::Utc::now().naive_utc();
-    let expires = now + chrono::Duration::minutes(5);
+    println!("session nonce: {:?}", &session_nonce);
+    redundant_session_guarantee(&sid).await;
 
     let connection = &mut establish_connection();
-
     let response = connection.build_transaction()
         .read_write()
         .run(|conn| {
             diesel::insert_into(nonces)
-                .values((
-                    nonce.eq(&nonce_value),
-                    created_at.eq(&now),
-                    expires_at.eq(&expires),
-                    session_id.eq(&sid)
-                ))
+                .values(
+                    &session_nonce,
+                )
                 .on_conflict(session_id)
                 .do_update()
                 .set((
-                    nonce.eq(&nonce_value),
-                    created_at.eq(&now),
-                    expires_at.eq(&expires),
+                    nonce.eq(&session_nonce.nonce),
+                    created_at.eq(&session_nonce.created_at),
+                    expires_at.eq(&session_nonce.expires_at),
                 ))
                 .execute(conn)
         });
 
+    println!("after insert");
+
     trace!("Nonce added for session to database");
     match response {
         Ok(_) => {
-            Ok(NoncePayload::as_response(nonce_value))
+            Ok(NoncePayload::as_response(session_nonce.nonce))
         },
         Err(e) => {
             println!("{:?}", e);

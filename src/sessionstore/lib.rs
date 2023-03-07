@@ -37,38 +37,23 @@ impl SessionStore for PostgresSessionStore {
 
         let sid = Session::id_from_cookie_value(&cookie_value).unwrap().to_string();
         println!("load session ({})", &sid);
-        let now = chrono::Utc::now().naive_utc();
-        let expires = (&(chrono::Utc::now() + chrono::Duration::hours(1)))
-            .naive_utc();
 
         let user_session = UserSession::new(
             sid.clone(),
             None,
-            expires,
             None,
-            now,
+            None,
             None,
             None
         );
 
         let mut connection = self.connection();
-        
-        // insert session into store if first time accessing.
-        connection.build_transaction()
-            .read_write()
-            .run(|conn| {
-                diesel::insert_into(sessions)
-                    .values(&user_session)
-                    .on_conflict_do_nothing()
-                    .execute(conn)
-            }).unwrap();
-
         let result = connection.build_transaction()
             .read_only()
             .run(|conn| {
                 sessions
                     .filter(id.eq(&sid))
-                    .filter(expires_at.ge(now))
+                    .filter(expires_at.ge(&user_session.last_activity))
                     .first::<UserSession>(conn)
             });
         
@@ -93,22 +78,18 @@ impl SessionStore for PostgresSessionStore {
     async fn store_session(&self, session: Session) -> Result<Option<String>> {
         use crate::schema::sessions::dsl::*;
 
-        let now = chrono::Utc::now().naive_utc();
-        let expires = session.expiry()
-            .unwrap_or(&(chrono::Utc::now() + chrono::Duration::hours(1)))
-            .naive_utc();
-
         let sid = session.id().to_string();
         println!("store session ({})", &sid);
         let s_data = Some(serde_json::to_string(&session)?);
         let s_user_id = session.get::<Uuid>("user_id");
 
+        let expiry = session.expiry().map(|s| s.naive_utc());
+
         let user_session = UserSession::new(
             sid,
             s_data.clone(),
-            expires,
+            expiry,
             None,
-            now,
             None,
             s_user_id
         );
@@ -118,12 +99,12 @@ impl SessionStore for PostgresSessionStore {
             .read_write()
             .run(|conn| {
                 diesel::insert_into(sessions)
-                    .values(user_session)
+                    .values(&user_session)
                     .on_conflict(id)
                     .do_update()
                     .set((
-                        session_data.eq(s_data),
-                        last_activity.eq(now),
+                        session_data.eq(&user_session.session_data),
+                        last_activity.eq(&user_session.last_activity),
                     ))
                     .execute(conn)
             });

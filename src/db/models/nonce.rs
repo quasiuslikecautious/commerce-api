@@ -15,7 +15,19 @@ pub struct Nonce {
 }
 
 impl Nonce {
-    pub fn generate(length: usize) -> String {
+    pub fn new(session_id: &str) -> Self {
+        let now = chrono::Utc::now().naive_utc();
+        let expiry = now + chrono::Duration::minutes(5);
+
+        Self {
+            nonce: Self::generate_hash(64),
+            created_at: now,
+            expires_at: expiry,
+            session_id: session_id.to_string(),
+        }
+    }
+
+    pub fn generate_hash(length: usize) -> String {
         let random_bytes: Vec<u8> = (0..length).map(|_| rand::thread_rng().gen()).collect();
         general_purpose::URL_SAFE_NO_PAD.encode(random_bytes)
     }
