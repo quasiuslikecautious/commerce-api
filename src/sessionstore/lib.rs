@@ -36,8 +36,6 @@ impl SessionStore for PostgresSessionStore {
         use crate::schema::sessions::dsl::*;
 
         let sid = Session::id_from_cookie_value(&cookie_value).unwrap().to_string();
-        println!("load session ({})", &sid);
-
         let user_session = UserSession::new(
             sid.clone(),
             None,
@@ -59,15 +57,9 @@ impl SessionStore for PostgresSessionStore {
         
         match result {
             Ok(data) => {
-                println!("{:?}", data);
-                let session = data.session_data
+                Ok(data.session_data
                     .map(|session| serde_json::from_str::<Session>(&session))
-                    .transpose();
-                if session.is_ok() {
-                    println!("parsed session: {:?}", session);
-                }
-                Ok(session?)
-
+                    .transpose()?)
             },
             Err(_) => {
                 Err(async_session::Error::msg("The jank continues"))
@@ -79,7 +71,6 @@ impl SessionStore for PostgresSessionStore {
         use crate::schema::sessions::dsl::*;
 
         let sid = session.id().to_string();
-        println!("store session ({})", &sid);
         let s_data = Some(serde_json::to_string(&session)?);
         let s_user_id = session.get::<Uuid>("user_id");
 

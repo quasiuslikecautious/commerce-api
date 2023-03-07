@@ -27,9 +27,9 @@ diesel::table! {
 diesel::table! {
     nonces (session_id) {
         nonce -> Text,
-        created_at -> Timestamptz,
-        expires_at -> Timestamptz,
         session_id -> Text,
+        key -> Text,
+        created_at -> Int8,
     }
 }
 

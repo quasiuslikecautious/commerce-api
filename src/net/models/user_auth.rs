@@ -6,4 +6,5 @@ pub struct UserAuth {
     #[validate(email)]
     pub email: String,
     pub password: String,
+    pub nonce: String,
 }

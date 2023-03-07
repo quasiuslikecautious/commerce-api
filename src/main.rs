@@ -271,7 +271,6 @@ async fn nonce(session: ReadableSession) -> Result<NonceResponse, ErrorResponse>
     let sid = session.id();
     let session_nonce = Nonce::new(&sid);
 
-    println!("session nonce: {:?}", &session_nonce);
     redundant_session_guarantee(&sid).await;
 
     let connection = &mut establish_connection();
@@ -286,21 +285,17 @@ async fn nonce(session: ReadableSession) -> Result<NonceResponse, ErrorResponse>
                 .do_update()
                 .set((
                     nonce.eq(&session_nonce.nonce),
-                    created_at.eq(&session_nonce.created_at),
-                    expires_at.eq(&session_nonce.expires_at),
+                    key.eq(&session_nonce.key),
                 ))
                 .execute(conn)
         });
 
-    println!("after insert");
-
     trace!("Nonce added for session to database");
     match response {
         Ok(_) => {
-            Ok(NoncePayload::as_response(session_nonce.nonce))
+            Ok(NoncePayload::as_response(session_nonce.get_hmac()))
         },
-        Err(e) => {
-            println!("{:?}", e);
+        Err(_) => {
             Err(AppError::as_response(StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate nonce"))
         },
     }
@@ -313,32 +308,6 @@ async fn nonce(session: ReadableSession) -> Result<NonceResponse, ErrorResponse>
 /// and the returns the user's uuid, email, role uuid, and a generated JWT to be used for
 /// access control and stateless management. Additionally sends a set-cookie header for browser
 /// clients
-/// 
-/// # Errors
-/// This route will error if the specified combination of username and password does not exist in
-/// the database.
-/// 
-/// # Examples
-/// 
-/// ```
-/// use axum::{ Router, routing::post };
-/// 
-/// fn main() {
-///     ...
-///     let app = Router::new()
-///         .route("/auth", post(auth))
-///     ...
-/// }
-/// ```
-/// 
-/// To access this route, use the following curl:
-/// 
-/// ```sh
-/// curl --insecure -X POST https://localhost:8000/auth \
-///     -H 'Content-Type: application/json' \
-///     -d '{"email": "<some email>", "password": "<some password>"}'
-/// ```
-/// 
 async fn signin(
     mut session: WritableSession, 
     Json(payload): Json<UserAuth>
@@ -347,6 +316,14 @@ async fn signin(
     use crate::schema::users::dsl::*;
 
     let connection = &mut establish_connection();
+
+    let sid = session.id();
+    let nonce = Nonce::consume(sid);
+
+    if nonce.is_none() || nonce.unwrap().validate(sid) {
+        return Err(AppError::as_response(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
+
 
     let response = connection.build_transaction()
         .read_only()
