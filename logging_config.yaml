@@ -16,7 +16,7 @@ appenders:
         kind: fixed_window
         base: 1
         count: 10
-        pattern: "log/my{}.log"
+        pattern: "log/commerce{}.log"
 root:
   level: info
   appenders:

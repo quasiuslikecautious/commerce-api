@@ -1,17 +1,3 @@
-// TODO:
-// [ ] nonce for auth (?)
-//     [x] fix custom session store to save session if new
-// [ ] connect JWT and cooke session
-// [x] pagination
-//      [x] add to /item/all route
-// [ ] email service
-//      [ ] password reset
-//      [ ] email verification
-// [ ] encrypt data at rest
-// [ ] truncate table from diesel
-// [ ] crate documentation
-// [ ] openapi documentation
-
 //! Commerce API written with Axum and Diesel
 //! 
 //! This is the binary for the commerce RESTful API written with Axum RUST. 
@@ -85,10 +71,19 @@ async fn main() {
     log4rs::init_file("logging_config.yaml", Default::default()).unwrap();
     trace!("main");
 
+    dotenv().ok();
+    let http_port = str::parse::<u16>(
+        &env::var("HTTP_PORT").unwrap_or_default()
+    ).unwrap_or(7878);
+
+    let https_port = str::parse::<u16>(
+        &env::var("HTTPS_PORT").unwrap_or_default()
+    ).unwrap_or(8000);
+
     // setup https
     let ports = Ports {
-        http: 7878,
-        https: 8000,
+        http: http_port,
+        https: https_port,
     };
     
     // build our application
@@ -125,12 +120,8 @@ async fn main() {
         .nest("/session", session_routes)
         .nest("/item", item_routes);
 
-    // get api version from .env
-    dotenv().ok();
-    let api_version = env::var("API_VERSION").expect("API_VERSION must be set");
-
     let api_routes = Router::new()
-        .nest(format!("/api/v{}", api_version).as_str(), all_routes);
+        .nest("/api/v1", all_routes);
     
     let app = with_middleware_stack(api_routes)
         .fallback(fallback);
