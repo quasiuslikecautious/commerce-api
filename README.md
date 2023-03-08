@@ -85,8 +85,8 @@ To get a local copy up and running follow these simple steps.
 ### Prerequisites
 
 To run this api, you will need to have cargo installed, and PostgreSQL setup
-* Cargo <a href="https://doc.rust-lang.org/cargo/getting-started/installation.html">installation docs</a>
-* PostgreSQL <a href="https://www.postgresql.org/download/">download page</a>
+* Cargo [installation docs]("https://doc.rust-lang.org/cargo/getting-started/installation.html")
+* PostgreSQL [download page]("https://www.postgresql.org/download/")
 
 After installing postgres, make sure you setup a database to be used with the api, e.g.
 
@@ -96,7 +96,8 @@ CREATE DATABASE commerce; -- Where commerce cand be any name you want
 
 <br />
 <strong>Side Note:</strong>
-I also highly recommend <a href="https://crates.io/crates/cargo-watch">cargo-watch</a> for allowing live reloads on the server as changes are saved. If you do go this route, don't forget to ignore the log folder or cargo will just keep restarting the server!
+
+I also highly recommend [cargo-watch]("https://crates.io/crates/cargo-watch") for allowing live reloads on the server as changes are saved. If you do go this route, don't forget to ignore the log folder or cargo will just keep restarting the server!
 <br />
 <br />
 
@@ -130,7 +131,7 @@ I also highly recommend <a href="https://crates.io/crates/cargo-watch">cargo-wat
     diesel migration run
     ```
 
-1. Finally, generate a certificate for the server to use for https. I won't get into the weeds on how to generate the certificate, but I highly recommend <a href="https://www.baeldung.com/openssl-self-signed-cert">this blog</a> if you need any help. The only requirements the server has on the certificate, is that they are stored in .../self_signed_certs/localhost.crt, and .../self_signed_certs/localhost.key path.
+1. Finally, generate a certificate for the server to use for https. I won't get into the weeds on how to generate the certificate, but I highly recommend [this blog]("https://www.baeldung.com/openssl-self-signed-cert") if you need any help. The only requirements the server has on the certificate, is that they are stored in .../self_signed_certs/localhost.crt, and .../self_signed_certs/localhost.key path.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -186,12 +187,11 @@ _For more examples, please refer to the [Documentation](https://example.com) TOD
 
 - [x] Add a README
   - [ ] Link API docs once created to usage section
-- [ ] Add digest Authentication
+- [ ] Add BASIC Authentication over https
   - [x] Use session-cookie based user auth instead of JWTs
-    - [ ] Create protected tower layer for session guarding
   - [ ] Add nonce for authentication
     - [x] Fix custom implemented session store to save session if new
-  - [ ] Add client nonce (?)
+- [ ] Add OAuth 2.0 auth instead
   - [ ] Set up extractors on routes for grabbing/guarding routes
 - [ ] Add pagination for /items route and future multi item return routes
 - [ ] Reuse JWT for external API authentication
@@ -203,6 +203,7 @@ _For more examples, please refer to the [Documentation](https://example.com) TOD
 - [ ] Add unit tests
 - [ ] Add api documentation (openapi)
 - [x] Move db ops out of main loop and into struct files
+- [ ] 
 
 See the [open issues](https://github.com/quasiuslikecautious/commerce-api/issues) for a full list of proposed features (and known issues).
 
