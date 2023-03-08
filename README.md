@@ -188,6 +188,7 @@ _For more examples, please refer to the [Documentation](https://example.com) TOD
   - [ ] Link API docs once created to usage section
 - [ ] Add digest Authentication
   - [x] Use session-cookie based user auth instead of JWTs
+    - [ ] Create protected tower layer for session guarding
   - [ ] Add nonce for authentication
     - [x] Fix custom implemented session store to save session if new
   - [ ] Add client nonce (?)
@@ -201,7 +202,7 @@ _For more examples, please refer to the [Documentation](https://example.com) TOD
 - [ ] Add documentation to crate
 - [ ] Add unit tests
 - [ ] Add api documentation (openapi)
-- [ ] Move db ops out of main loop and into struct files
+- [x] Move db ops out of main loop and into struct files
 
 See the [open issues](https://github.com/quasiuslikecautious/commerce-api/issues) for a full list of proposed features (and known issues).
 

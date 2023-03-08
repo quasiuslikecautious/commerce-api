@@ -20,7 +20,6 @@ use axum::{
 use axum_auth::AuthBearer;
 use axum_server::tls_rustls::RustlsConfig;
 use axum_sessions::extractors::{ ReadableSession, WritableSession };
-use diesel::{ prelude::*, RunQueryDsl, QueryDsl };
 use dotenvy::dotenv;
 use log::{ debug, trace, info };
 use std::{ env, net::SocketAddr, path::PathBuf, time::Duration, collections::HashMap };
@@ -225,68 +224,18 @@ async fn admin(
     return Err(AppError::as_response(StatusCode::UNAUTHORIZED, "Unauthorized"));
 }
 
-/// Due to the way axum session layer currently works, on session load the layer is given a sort of
-/// initial session id, and then on session store a new session id is generated and used for the
-/// rest of the session. As such, when we receive a request on a route that requires a valid
-/// session id to already exist in the database (i.e. the fk requirement of nonces on the sessions
-/// table), we must insert the new session id if it does not already exist. Hopefully this is a
-/// temporary fix.
-async fn redundant_session_guarantee(sid: &str) {
-    use crate::schema::sessions::dsl::*;
-
-    let connection = &mut establish_connection();
-    connection.build_transaction()
-        .read_write()
-        .run(|conn| {
-              diesel::insert_into(sessions)
-                    .values(
-                        UserSession::new(
-                            sid.to_string(),
-                            None,
-                            None,
-                            None,
-                            None,
-                            None
-                        )
-                    )
-                    .on_conflict_do_nothing()
-                    .execute(conn)
-        }).unwrap();
-}
-
 ///
 async fn nonce(session: ReadableSession) -> Result<NonceResponse, ErrorResponse> {
     debug!("GET request received on /nonce route");
-    use crate::schema::nonces::dsl::*;
-
     let sid = session.id();
-    let session_nonce = Nonce::new(&sid);
+    let nonce = Nonce::new(&sid);
 
-    redundant_session_guarantee(&sid).await;
-
-    let connection = &mut establish_connection();
-    let response = connection.build_transaction()
-        .read_write()
-        .run(|conn| {
-            diesel::insert_into(nonces)
-                .values(
-                    &session_nonce,
-                )
-                .on_conflict(session_id)
-                .do_update()
-                .set((
-                    nonce.eq(&session_nonce.nonce),
-                    key.eq(&session_nonce.key),
-                ))
-                .execute(conn)
-        });
-
-    trace!("Nonce added for session to database");
-    match response {
-        Ok(_) => {
-            Ok(NoncePayload::as_response(session_nonce.get_hmac()))
+    UserSession::redundant_guarantee(&sid).unwrap();
+    match nonce.insert() {
+        Some(_) => {
+            Ok(NoncePayload::as_response(nonce.get_hmac()))
         },
-        Err(_) => {
+        None => {
             Err(AppError::as_response(StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate nonce"))
         },
     }
@@ -304,43 +253,28 @@ async fn signin(
     Json(payload): Json<UserAuth>
 ) -> ApiResponseWithHeaders<UserAuthPayload> {
     debug!("POST request received on /signin route");
-    use crate::schema::users::dsl::*;
-
-    let connection = &mut establish_connection();
-
     let sid = session.id();
-    let nonce = Nonce::consume(sid);
+    let nonce = Nonce::take(sid);
 
     if nonce.is_none() || nonce.unwrap().validate(sid) {
         return Err(AppError::as_response(StatusCode::UNAUTHORIZED, "Unauthorized"));
     }
 
-
-    let response = connection.build_transaction()
-        .read_only()
-        .run(|conn| {
-            users
-                .filter(email.eq(&payload.email))
-                .filter(password.eq(crypt(&payload.password, password)))
-                .first::<User>(conn)
-            });
-
-    trace!("Values received from database");
-
-    return match response {
-        Ok(user) => {
+    match User::get_from_auth(payload.email.as_str(), payload.password.as_str()) {
+        Some(user) => {
             debug!("Auth request successfully fulfilled, sending JSON response");
             session.insert("user_id", &user.uuid).expect("Failed to set auth session");
             let payload = UserAuthPayload::from(user);
 
-            Ok( (
+            Ok((
                 AppendHeaders(
                     vec!((SET_COOKIE.to_string(), get_auth_cookie(&payload.token)))
                 )
-                , Json(payload) ) )
+                , Json(payload)
+            ))
         },
-        Err(_) => Err(AppError::as_response(StatusCode::UNAUTHORIZED, "Failed to authenticate")),
-    };
+        None => Err(AppError::as_response(StatusCode::UNAUTHORIZED, "Failed to authenticate")),
+    }
 }
 
 async fn signout(
@@ -359,35 +293,19 @@ async fn signup(
     Json(payload): Json<UserAuth>
 ) -> ApiResponse<UserData> {
     debug!("PUT request recieved on /signup route");
-    use crate::schema::users::dsl::*;
-
-    let connection = &mut establish_connection();
 
     match payload.validate() {
         Ok(_) => (),
         Err(_) => return Err(AppError::as_response(StatusCode::BAD_REQUEST, "Input validation failed")),
     };
 
-    let response = connection.build_transaction()
-        .read_write()
-        .run(|conn| {
-            diesel::insert_into(users)
-                .values((
-                    email.eq(payload.email),
-                    password.eq(crypt(payload.password, gen_salt("bf"))),
-                ))
-                .get_result::<User>(conn)
-        });
-    
-    trace!("Values received from database");
-
-    match response {
-        Ok(body) => {
+    match User::insert(payload.email.as_str(), payload.password.as_str())    {
+        Some(user) => {
             debug!("User request successfully fulfilled, user created, sending JSON response");
-            session.insert("user_id", body.uuid).expect("Failed to set user auth session");
-            Ok(Json(UserData::from(body)))
+            session.insert("user_id", user.uuid).expect("Failed to set user auth session");
+            Ok(Json(UserData::from(user)))
         },
-        Err(_) => Err(AppError::as_response(StatusCode::INTERNAL_SERVER_ERROR, "Unable to create user"))
+        None => Err(AppError::as_response(StatusCode::INTERNAL_SERVER_ERROR, "Unable to create user"))
     }
 }
 
@@ -400,10 +318,8 @@ async fn get_user(
     Path(params): Path<HashMap<String, String>>
 ) -> ApiResponse<UserData> {
     debug!("GET request received on /user/:uuid route");
-    use crate::schema::users::dsl::*;
 
     let path_user_id = parse_path_uuid(params, "id")?;
-
     let session_user_id = session.get::<Uuid>("user_id");
 
     trace!("Fallback role check for 'admin'");
@@ -411,24 +327,12 @@ async fn get_user(
         return Err(AppError::as_response(StatusCode::UNAUTHORIZED, "Unauthorized"));
     }
 
-    let connection = &mut establish_connection();
-
-    let response = connection.build_transaction()
-        .read_only()
-        .run(|conn| {
-            users
-                .filter(uuid.eq(&path_user_id))
-                .first::<User>(conn)
-        });
-
-    trace!("Values received from database");
-
-    match response {
-        Ok(body) => {
+    match User::get(path_user_id) {
+        Some(user) => {
             debug!("User request successfully fulfilled, sending JSON response");
-            Ok(Json(UserData::from(body)))
+            Ok(Json(UserData::from(user)))
         },
-        Err(_) => Err(AppError::as_response(StatusCode::NOT_FOUND, "User not found")),
+        None => Err(AppError::as_response(StatusCode::NOT_FOUND, "User not found")),
     }
 }
 
@@ -437,28 +341,15 @@ async fn get_item(
     Path(params): Path<HashMap<String, String>>
 ) -> ApiResponse<Deal> {
     debug!("GET request received on /item/:uuid route");
-    use crate::schema::deals::dsl::*;
 
-    let connection = &mut establish_connection();
+    let item_id = parse_path_uuid(params, "id")?;
 
-    let path_item_id = parse_path_uuid(params, "id")?;
-
-    let response = connection.build_transaction()
-        .read_only()
-        .run(|conn| {
-            deals
-                .filter(uuid.eq(path_item_id))
-                .first::<Deal>(conn)
-        });
-
-    trace!("Values received from database");
-
-    match response {
-        Ok(body) => {
+    match Deal::get(item_id) {
+        Some(item) => {
             debug!("Item request successfully fulfilled, sending JSON response");
-            Ok(Json(body))
+            Ok(Json(item))
         },
-        Err(_) => Err(AppError::as_response(StatusCode::NOT_FOUND, "Item not found")),
+        None => Err(AppError::as_response(StatusCode::NOT_FOUND, "Item not found")),
     }
 }
 
@@ -467,30 +358,13 @@ async fn create_item(
     Json(payload): Json<Deal>
 ) -> ApiResponse<Deal> {
     debug!("PUT request received on /item route");
-    use crate::schema::deals::dsl::*;
 
-    let connection = &mut establish_connection();
-
-    let response = connection.build_transaction()
-        .read_write()
-        .run(|conn| {
-            diesel::insert_into(deals)
-                .values((
-                    name.eq(payload.name),
-                    image.eq(payload.image),
-                    price.eq(payload.price),
-                ))
-                .get_result::<Deal>(conn)
-            });
-    
-    trace!("Values received from database");
-    
-    match response {
-        Ok(body) => {
+    match payload.insert() {
+        Some(item) => {
             debug!("Item request successfully fulfilled, item created, sending JSON response");
-            Ok(Json(body))
+            Ok(Json(item))
         },
-        Err(_) => Err(AppError::as_response(StatusCode::INTERNAL_SERVER_ERROR, "Failed to create item"))
+        None => Err(AppError::as_response(StatusCode::INTERNAL_SERVER_ERROR, "Failed to create item"))
     }
 }
 
@@ -499,28 +373,14 @@ async fn get_items(
     pagination: Option<Query<Pagination>>
 ) -> ApiResponse<Items> {
     debug!("GET request received on /items route");
-    use crate::schema::deals::dsl::*;
 
     let Query(pagination) = pagination.unwrap_or_default();
 
-    let connection = &mut establish_connection();
-
-    let response = connection.build_transaction()
-        .read_only()
-        .run(|conn| {
-            deals
-                .limit(pagination.get_limit())
-                .offset(pagination.get_offset())
-                .load::<Deal>(conn)
-        });
-
-    trace!("Values received from database");
-    
-    match response {
-        Ok(body) => {
+    match Deal::get_all(pagination) {
+        Some(deals) => {
             debug!("Items request successfully fulfilled, sending JSON array response");
-            Ok(Json(Items { items: body, }))
+            Ok(Json(Items { items: deals, }))
         },
-        Err(_) => Err(AppError::as_response(StatusCode::INTERNAL_SERVER_ERROR, "Failed to get items")),
+        None => Err(AppError::as_response(StatusCode::INTERNAL_SERVER_ERROR, "Failed to get items")),
     }
 }

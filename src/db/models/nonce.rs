@@ -7,6 +7,7 @@ use serde::{ Serialize, Deserialize };
 use std::{ env, time::{ SystemTime, UNIX_EPOCH }};
 
 use super::schema;
+use crate::establish_connection;
 
 #[derive(Queryable, Insertable, Serialize, Deserialize, Debug)]
 #[diesel(primary_key(session_id), table_name = schema::nonces)]
@@ -36,7 +37,7 @@ impl Nonce {
         }
     }
 
-    pub fn consume(sid: &str) -> Option<Nonce> {
+    pub fn take(sid: &str) -> Option<Nonce> {
         use super::schema::nonces::dsl::*;
 
         let connection = &mut crate::establish_connection();
@@ -61,6 +62,32 @@ impl Nonce {
         };
 
         result.ok()
+    }
+
+    pub fn insert(&self) -> Option<()> {
+        use schema::nonces::dsl::*;
+
+        let connection = &mut establish_connection();
+        let response = connection.build_transaction()
+            .read_write()
+            .run(|conn| {
+                diesel::insert_into(nonces)
+                    .values(
+                        self,
+                    )
+                    .on_conflict(session_id)
+                    .do_update()
+                    .set((
+                        nonce.eq(&self.nonce),
+                        key.eq(&self.key),
+                    ))
+                    .execute(conn)
+            });
+
+        match response.ok() {
+            Some(_) => Some(()),
+            None => None,
+        }
     }
 
     pub fn validate(&self, tag: &str) -> bool {

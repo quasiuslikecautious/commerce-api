@@ -1,8 +1,13 @@
 use uuid::Uuid;
-use diesel::prelude::*;
+use diesel::{ prelude::*, RunQueryDsl, QueryDsl, };
 use serde::{ Serialize, Deserialize };
 
-use crate::db::models::schema;
+use super::schema;
+use crate::db::{
+    crypt,
+    establish_connection,
+    gen_salt,
+};
 
 /// The struct to represent a user returned from the postgresql database
 /// 
@@ -34,3 +39,56 @@ pub struct User {
     pub password: String,
     pub role: Uuid,
 }
+
+impl User {
+    pub fn get(user_id: Uuid) -> Option<User> {
+        use schema::users::dsl::*;
+
+        let connection = &mut establish_connection();
+        let response = connection.build_transaction()
+        .read_only()
+        .run(|conn| {
+            users
+                .filter(uuid.eq(user_id))
+                .first::<User>(conn)
+        });
+
+        response.ok()
+    }
+
+    pub fn get_from_auth(user_email: &str, user_password: &str) -> Option<User> {
+        use schema::users::dsl::*;
+
+        let connection = &mut establish_connection();
+        let response = connection.build_transaction()
+        .read_only()
+        .run(|conn| {
+            users
+                .filter(email.eq(user_email))
+                .filter(password.eq(crypt(user_password, password)))
+                .first::<User>(conn)
+            });
+
+        response.ok()
+    }
+
+    pub fn insert(user_email: &str, user_password: &str) -> Option<User> {
+        use schema::users::dsl::*;
+
+        let connection = &mut establish_connection();
+        let response = connection.build_transaction()
+        .read_write()
+        .run(|conn| {
+            diesel::insert_into(users)
+                .values((
+                    email.eq(user_email),
+                    password.eq(crypt(user_password, gen_salt("bf"))),
+                ))
+                .get_result::<User>(conn)
+        });
+
+        response.ok()
+    }
+}
+
+
